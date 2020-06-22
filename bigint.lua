@@ -4,6 +4,18 @@
 -- errors and bugs earlier.
 local strict = true
 
+
+local function split (inputstr, sep)
+    if sep == nil then
+        sep = "%s"
+    end
+    local t={}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        table.insert(t, str)
+    end
+    return t
+end
+
 --------------------------------------------------------------------------------
 
 local bigint = {}
@@ -68,16 +80,7 @@ function bigint.new(num)
     })
 
     if num then
-        local function split (inputstr, sep)
-            if sep == nil then
-                sep = "%s"
-            end
-            local t={}
-            for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
-                table.insert(t, str)
-            end
-            return t
-        end
+        
 
         local num_string = tostring(num)
         local tokens = split(num_string, 'e+')
@@ -207,7 +210,10 @@ function bigint.unserialize(big, output_type, precision, units)
         if (precision > 1) then
             num = num .. "."
             for i = 1, (precision - 1) do
-                num = num .. big.digits[i + 1]
+                local val = big.digits[i + 1]
+                if val then
+                    num = num .. val
+                end
             end
         end
 
@@ -240,7 +246,7 @@ function bigint.unserialize(big, output_type, precision, units)
             end
             local num = tonumber(table.concat(t))
             num = num / 1000
-            return num .. (units[n] or '')
+            return num .. '' .. (units[n] or '')
         else
             return num .. "*10^" .. (#big.digits - 1)
         end
@@ -614,7 +620,12 @@ function bigint.modulus(big1, big2)
 end
 
 function bigint.tostring( big, units)
-    local b = bigint.new(big)
+    local b
+    if type(big) == 'table' then
+        b = big
+    else
+        b = bigint.new(big)
+    end
     if units then
         return bigint.unserialize(b, 'h', 3, units)
     else
@@ -623,7 +634,44 @@ function bigint.tostring( big, units)
 end
 
 function bigint.fromstring( str, units )
-    -- body
+    local digits = {}
+    for digit in string.gmatch(str, "[0-9]") do
+        table.insert(digits, tonumber(digit))
+    end
+
+    local us = {}
+    for word in string.gmatch(str, "%a+") do
+        table.insert(us, word)
+    end
+    local num = table.concat(digits)
+    local unit
+    if #us == 1 then
+        unit = us[1]
+    end
+    
+    local index = 0
+    for i,v in ipairs(units) do
+        if v == unit then 
+            index = i
+            break
+        end
+    end
+    local ss = str
+    if unit then
+        ss = str:gsub(unit, '')
+    end
+    -- 小数点
+    local tokens = split(ss, '.')
+    local carry = 0
+    if #tokens == 2 then
+        carry = #tokens[2]
+    end
+    -- 乘上倍数
+    local result = bigint.new(str)
+    for i=1,((index * 3) - carry) do
+        table.insert(result.digits, 0)
+    end
+    return result
 end
 
 return bigint
