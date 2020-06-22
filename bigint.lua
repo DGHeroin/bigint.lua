@@ -8,8 +8,6 @@ local strict = true
 
 local bigint = {}
 
-local named_powers = require("named-powers-of-ten")
-
 -- Create a new bigint or convert a number or string into a big
 -- Returns an empty, positive bigint if no number or string is given
 function bigint.new(num)
@@ -26,6 +24,14 @@ function bigint.new(num)
             newint.digits[#newint.digits + 1] = digit
         end
         return newint
+    end
+
+    function self.raw()
+        local t = {}
+        for i,v in ipairs(self.digits) do
+            table.insert(t, tostring(v))
+        end
+        return table.concat(t)
     end
 
     setmetatable(self, {
@@ -55,13 +61,45 @@ function bigint.new(num)
         end,
         __pow = function(lhs, rhs)
             return bigint.exponentiate(lhs, rhs)
-        end
+        end,
+        __tostring = function(lhs)
+            return bigint.unserialize(lhs)
+        end,
     })
 
-    if (num) then
+    if num then
+        local function split (inputstr, sep)
+            if sep == nil then
+                sep = "%s"
+            end
+            local t={}
+            for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+                table.insert(t, str)
+            end
+            return t
+        end
+
         local num_string = tostring(num)
-        for digit in string.gmatch(num_string, "[0-9]") do
-            table.insert(self.digits, tonumber(digit))
+        local tokens = split(num_string, 'e+')
+        if #tokens == 2 then -- 科学记数法
+            local n = tokens[1]
+
+            for digit in string.gmatch(n, "[0-9]") do
+                table.insert(self.digits, tonumber(digit))
+            end
+            local tx = split(n, '.')
+            local carry = 0
+            if #tx == 2 then -- 包含小数点
+                carry = #tx[2]
+            end
+            local s = tonumber(tokens[2]) - carry -- 科学记数法, 消去小数点长度
+            for i=1,s do
+                table.insert(self.digits, 0)
+            end
+        else -- 普通数值
+            for digit in string.gmatch(num_string, "[0-9]") do
+                table.insert(self.digits, tonumber(digit))
+            end
         end
         if string.sub(num_string, 1, 1) == "-" then
             self.sign = "-"
@@ -96,7 +134,7 @@ function bigint.abs(big)
 end
 
 -- Convert a big to a number or string
-function bigint.unserialize(big, output_type, precision)
+function bigint.unserialize(big, output_type, precision, units)
     bigint.check(big)
 
     local num = ""
@@ -120,7 +158,34 @@ function bigint.unserialize(big, output_type, precision)
         if ((output_type == nil)
         or (output_type == "number")
         or (output_type == "n")) then
-            return tonumber(num)
+            -- return tonumber(num)
+            local sz = #num
+            if sz < 20 then
+                return num
+            else
+                if (precision == nil) then
+                    precision = 3
+                else
+                    assert(precision > 0, "Precision cannot be less than 1")
+                    assert(math.floor(precision) == precision,
+                           "Precision must be a positive integer")
+                end
+                local num2 = ""
+                if big.sign == "-" then
+                    num2 = "-"
+                end
+                num2 = num2 .. big.digits[1]
+                if (precision > 1) then
+                    num2 = num2 .. "."
+                    for i = 1, (precision - 1) do
+                        num2 = num2 .. big.digits[i + 1]
+                    end
+                end
+                local result = tonumber(num)
+                local result2 = num2 .. 'e+'..tostring(sz - 1)
+                
+                return result2
+            end
         else
             return num
         end
@@ -150,28 +215,32 @@ function bigint.unserialize(big, output_type, precision)
         or (output_type == "human")
         or (output_type == "h")) then
             -- Human-readable output contributed by 123eee555
-
-            local name
-            local walkback = 0 -- Used to enumerate "ten", "hundred", etc
-
-            -- Walk backwards in the index of named_powers starting at the
-            -- number of digits of the input until the first value is found
-            for i = (#big.digits - 1), (#big.digits - 4), -1 do
-                name = named_powers[i]
-                if (name) then
-                    if (walkback == 1) then
-                        name = "ten " .. name
-                    elseif (walkback == 2) then
-                        name = "hundred " .. name
-                    end
-                    break
-                else
-                    walkback = walkback + 1
+            local sz = #big.digits
+            local t = {}
+            if sz < 4 then
+                for i=1,sz do
+                    table.insert(t, big.digits[i])
                 end
+                return table.concat(t)
             end
-
-            return num .. " " .. name
-
+            
+            if sz == 4 then
+                local val = tonumber(big.raw()) / 1000
+                return tostring(val) .. 'K'
+            end
+            local n = math.floor(sz / 3)
+            local v = sz - n * 3
+            if v == 0 then -- 刚好被整除
+                v = 1
+                n = n - 1
+            end
+            v = sz - n * 3
+            for i=1,v+3 do
+                table.insert(t, big.digits[i])
+            end
+            local num = tonumber(table.concat(t))
+            num = num / 1000
+            return num .. (units[n] or '')
         else
             return num .. "*10^" .. (#big.digits - 1)
         end
@@ -542,6 +611,19 @@ function bigint.modulus(big1, big2)
     -- https://en.wikipedia.org/wiki/Modulo_operation#Remainder_calculation_for_the_modulo_operation
     remainder.sign = big1.sign
     return remainder
+end
+
+function bigint.tostring( big, units)
+    local b = bigint.new(big)
+    if units then
+        return bigint.unserialize(b, 'h', 3, units)
+    else
+        return bigint.unserialize(b, 'number', 3, units)
+    end
+end
+
+function bigint.fromstring( str, units )
+    -- body
 end
 
 return bigint
